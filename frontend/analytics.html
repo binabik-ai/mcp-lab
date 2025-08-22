@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Lab - Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .analytics-container {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+        }
+        
+        .stat-card h3 {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        
+        .stat-details {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        
+        .filters {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem;
+            margin-bottom: 2rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        
+        .filter-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        
+        .conversations-table {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        td {
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.875rem;
+        }
+        
+        tr:hover {
+            background: rgba(0, 212, 255, 0.05);
+        }
+        
+        .truncate {
+            max-width: 300px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .tools-badge {
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">📊</div>
+            <h1>MCP Lab Analytics</h1>
+        </div>
+        <div class="header-right">
+            <button onclick="window.location.href='/'" class="btn-secondary">
+                🧪 Back to Lab
+            </button>
+        </div>
+    </header>
+
+    <div class="analytics-container">
+        <!-- Summary Stats -->
+        <div class="stats-grid" id="statsGrid">
+            <!-- Stats populated by JS -->
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <button onclick="exportData('json')" class="btn-secondary">📥 Export JSON</button>
+            <button onclick="exportData('csv')" class="btn-secondary">📥 Export CSV</button>
+            <button onclick="clearDatabase()" class="btn-secondary" style="background: rgba(248, 113, 113, 0.1); border-color: var(--error);">🗑️ Clear All</button>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <div class="filter-group">
+                <label class="filter-label">Provider</label>
+                <select id="providerFilter" class="select" onchange="loadConversations()">
+                    <option value="">All Providers</option>
+                    <option value="groq">Groq</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Date Range</label>
+                <input type="date" id="startDate" class="select" onchange="loadConversations()">
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">&nbsp;</label>
+                <input type="date" id="endDate" class="select" onchange="loadConversations()">
+            </div>
+            <button onclick="loadConversations()" class="btn-secondary">🔄 Refresh</button>
+        </div>
+
+        <!-- Conversations Table -->
+        <div class="conversations-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Provider</th>
+                        <th>Model</th>
+                        <th>User Message</th>
+                        <th>AI Response</th>
+                        <th>Tokens</th>
+                        <th>Latency</th>
+                        <th>Tools</th>
+                    </tr>
+                </thead>
+                <tbody id="conversationsBody">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/analytics/stats');
+                const stats = await response.json();
+                
+                const statsGrid = document.getElementById('statsGrid');
+                statsGrid.innerHTML = '';
+                
+                // Total conversations
+                statsGrid.innerHTML += `
+                    <div class="stat-card">
+                        <h3>Total Conversations</h3>
+                        <div class="stat-value">${stats.total_conversations || 0}</div>
+                    </div>
+                `;
+                
+                // Provider stats
+                Object.entries(stats.by_provider || {}).forEach(([provider, data]) => {
+                    statsGrid.innerHTML += `
+                        <div class="stat-card">
+                            <h3>${provider}</h3>
+                            <div class="stat-value">${data.count}</div>
+                            <div class="stat-details">
+                                Avg Latency: ${data.avg_latency}s<br>
+                                Avg Tokens: ${data.avg_tokens}<br>
+                                Avg Tools: ${data.avg_tools}
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+        
+        async function loadConversations() {
+            try {
+                const params = new URLSearchParams();
+                
+                const provider = document.getElementById('providerFilter').value;
+                if (provider) params.append('provider', provider);
+                
+                const startDate = document.getElementById('startDate').value;
+                if (startDate) params.append('start_date', startDate);
+                
+                const endDate = document.getElementById('endDate').value;
+                if (endDate) params.append('end_date', endDate);
+                
+                const response = await fetch(`/api/analytics/conversations?${params}`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('conversationsBody');
+                tbody.innerHTML = '';
+                
+                data.conversations.forEach(conv => {
+                    const timestamp = new Date(conv.timestamp).toLocaleString();
+                    const toolsInfo = conv.tools_called_count > 0 
+                        ? `<span class="tools-badge">${conv.tools_called_count} tools</span>`
+                        : '-';
+                    
+                    tbody.innerHTML += `
+                        <tr>
+                            <td>${timestamp}</td>
+                            <td>${conv.provider}</td>
+                            <td>${conv.model}</td>
+                            <td class="truncate" title="${escapeHtml(conv.user_message)}">${escapeHtml(conv.user_message)}</td>
+                            <td class="truncate" title="${escapeHtml(conv.ai_response || '')}">${escapeHtml(conv.ai_response || '')}</td>
+                            <td>${conv.total_tokens || 0}</td>
+                            <td>${conv.total_latency?.toFixed(2) || 0}s</td>
+                            <td>${toolsInfo}</td>
+                        </tr>
+                    `;
+                });
+                
+                if (data.conversations.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-secondary);">No conversations found</td></tr>';
+                }
+            } catch (error) {
+                console.error('Failed to load conversations:', error);
+            }
+        }
+        
+        async function exportData(format) {
+            try {
+                const response = await fetch('/api/analytics/conversations?limit=10000');
+                const data = await response.json();
+                
+                if (format === 'json') {
+                    const blob = new Blob([JSON.stringify(data.conversations, null, 2)], 
+                                        { type: 'application/json' });
+                    downloadBlob(blob, `mcp_lab_export_${Date.now()}.json`);
+                } else if (format === 'csv') {
+                    const csv = convertToCSV(data.conversations);
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    downloadBlob(blob, `mcp_lab_export_${Date.now()}.csv`);
+                }
+            } catch (error) {
+                console.error('Failed to export data:', error);
+            }
+        }
+        
+        function convertToCSV(data) {
+            if (data.length === 0) return '';
+            
+            const headers = ['timestamp', 'provider', 'model', 'user_message', 'ai_response', 
+                           'total_tokens', 'total_latency', 'tools_called_count'];
+            
+            const rows = data.map(row => 
+                headers.map(header => {
+                    const value = row[header] || '';
+                    return `"${String(value).replace(/"/g, '""')}"`;
+                }).join(',')
+            );
+            
+            return [headers.join(','), ...rows].join('\n');
+        }
+        
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        async function clearDatabase() {
+            if (confirm('Are you sure you want to delete all conversation history? This cannot be undone.')) {
+                try {
+                    await fetch('/api/analytics/clear', { method: 'DELETE' });
+                    loadStats();
+                    loadConversations();
+                } catch (error) {
+                    console.error('Failed to clear database:', error);
+                }
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+        
+        // Load data on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadConversations();
+        });
+    </script>
+</body>
+</html>

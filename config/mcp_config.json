@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "rosbag_reader": {
+      "command": "/Users/jopequ/dev/venv/bin/python",
+      "args": [
+        "/Users/jopequ/dev/mcp-rosbags-server/src/server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/jopequ/dev/mcp-rosbags-server/src",
+        "MCP_ROSBAG_DIR": "/Users/jopequ/dev/rosbags",
+        "MCP_ROSBAG_CONFIG": "/Users/jopequ/dev/mcp-rosbags-server/config"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+websockets
+python-dotenv
+langchain
+langchain-groq
+langchain-openai
+langchain-anthropic
+langchain-community
+aiosqlite
+httpx
+pydantic
+pydantic-settings
