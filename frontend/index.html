@@ -53,27 +53,28 @@
                 <div id="toolsInfo" class="tools-info"></div>
             </div>
         </div>
+        
+        <div class="input-container">
+            <div class="input-controls">
+                <label class="debug-toggle">
+                    <input type="checkbox" id="debugMode">
+                    <span>🔍 Debug Mode</span>
+                </label>
+                <button onclick="clearChat()" class="btn-secondary">🗑️ Clear</button>
+            </div>
+            <div class="input-wrapper">
+                <textarea id="messageInput" 
+                         class="message-input" 
+                         placeholder="Type your message..."
+                         rows="1"></textarea>
+                <button id="sendBtn" class="send-btn">Send</button>
+            </div>
+        </div>
     </main>
 
-    <footer class="input-container">
-        <div class="input-controls">
-            <label class="debug-toggle">
-                <input type="checkbox" id="debugMode">
-                <span>🔍 Debug Mode</span>
-            </label>
-            <button onclick="clearChat()" class="btn-secondary">🗑️ Clear</button>
-        </div>
-        <div class="input-wrapper">
-            <textarea id="messageInput" 
-                     class="message-input" 
-                     placeholder="Type your message..."
-                     rows="1"></textarea>
-            <button id="sendBtn" class="send-btn">Send</button>
-        </div>
-    </footer>
-
+    <script src="/static/script.js"></script>
     <script>
-        class MCPLab {
+        // Placeholder for any inline scripts if needed
             constructor() {
                 this.ws = null;
                 this.sessionId = null;
@@ -474,10 +475,6 @@
             }
         }
         
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            lab = new MCPLab();
-        });
     </script>
 </body>
 </html>
