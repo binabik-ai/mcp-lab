@@ -31,6 +31,11 @@ class Config:
     MAX_TOKENS = int(os.getenv('MAX_TOKENS', '4096'))
     TEMPERATURE = float(os.getenv('TEMPERATURE', '0.7'))
     
+    # System prompt
+    SYSTEM_PROMPT = os.getenv('SYSTEM_PROMPT', """You are a helpful AI assistant with access to various MCP (Model Context Protocol) tools. 
+    Use the available tools when they would be helpful to answer the user's questions or complete their tasks.
+    Be concise but thorough in your responses. If there is a tool to call, use it, do not rely on previous knowledge or previous conversation context.""")
+    
     # MCP Configuration
     MCP_CONFIG_FILE = os.getenv('MCP_CONFIG_FILE', 'config/mcp_config.json')
     

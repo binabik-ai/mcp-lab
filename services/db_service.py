@@ -28,6 +28,7 @@ class DatabaseService:
                     model TEXT NOT NULL,
                     user_message TEXT NOT NULL,
                     ai_response TEXT,
+                    system_prompt TEXT,
                     
                     -- Metrics
                     total_tokens INTEGER,
@@ -53,6 +54,7 @@ class DatabaseService:
     
     def save_conversation(self, session_id: str, provider: str, model: str,
                          user_message: str, ai_response: str,
+                         system_prompt: str = None,
                          total_tokens: int = 0, total_latency: float = 0,
                          tool_iterations: int = 0, tools_called_count: int = 0,
                          tool_calls: List[Dict] = None, media_outputs: List[str] = None):
@@ -61,12 +63,12 @@ class DatabaseService:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute('''
                     INSERT INTO conversations 
-                    (session_id, provider, model, user_message, ai_response,
+                    (session_id, provider, model, user_message, ai_response, system_prompt,
                      total_tokens, total_latency, tool_iterations, tools_called_count,
                      tool_calls, media_outputs)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    session_id, provider, model, user_message, ai_response,
+                    session_id, provider, model, user_message, ai_response, system_prompt,
                     total_tokens, total_latency, tool_iterations, tools_called_count,
                     json.dumps(tool_calls) if tool_calls else None,
                     json.dumps(media_outputs) if media_outputs else None
