@@ -128,8 +128,12 @@ class LLMService:
         total_tokens = 0
         
         try:
-            # Bind tools to LLM
-            llm_with_tools = session['llm'].bind_tools(tools) if tools else session['llm']
+            # Bind tools to LLM with explicit tool choice
+            if tools:
+                # Force tool choice to 'auto' to prevent the error
+                llm_with_tools = session['llm'].bind_tools(tools, tool_choice="auto")
+            else:
+                llm_with_tools = session['llm']
             
             # Initial LLM call
             response = await asyncio.to_thread(llm_with_tools.invoke, messages)
@@ -188,6 +192,7 @@ class LLMService:
                 
                 # Get final response after tool execution
                 if tool_calls_details:
+                    iterations += 1
                     final_response_obj = await asyncio.to_thread(session['llm'].invoke, messages)
                     final_response = final_response_obj.content
             
@@ -195,7 +200,10 @@ class LLMService:
             total_latency = time.time() - start_time
             
             # Estimate tokens (rough calculation)
-            total_tokens = len(message.split()) + len(final_response.split()) * 2
+            if final_response:
+                total_tokens = len(message.split()) + len(final_response.split()) * 2
+            else:
+                total_tokens = len(message.split()) * 2
             
             # Save to memory
             session['memory'].add_user_message(message)
