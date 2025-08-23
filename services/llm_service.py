@@ -150,6 +150,8 @@ class LLMService:
             if tool_calls:
                 # Execute tools
                 tools_map = {tool.name: tool for tool in tools}
+                tool_not_found_messages = []
+                
                 for tool_call in tool_calls:
                     tool_name = tool_call.get('name')
                     tool_args = tool_call.get('args', {})
@@ -189,9 +191,75 @@ class LLMService:
                                 'latency': time.time() - tool_start,
                                 'iteration': iterations
                             })
+                    else:
+                        # Tool not found - add message for LLM to retry
+                        error_msg = f"Tool '{tool_name}' not found. Available tools: {', '.join(tools_map.keys())}"
+                        tool_not_found_messages.append(error_msg)
+                        tool_calls_details.append({
+                            'name': tool_name,
+                            'args': tool_args,
+                            'error': error_msg,
+                            'latency': 0,
+                            'iteration': iterations
+                        })
+                        logger.warning(f"Tool not found: {tool_name}")
+                
+                # If there were tool not found errors, add them to messages and retry
+                if tool_not_found_messages:
+                    messages.append(response)
+                    for error_msg in tool_not_found_messages:
+                        messages.append(ToolMessage(
+                            content=error_msg,
+                            tool_call_id=tool_name
+                        ))
+                    
+                    # Retry with correct tools
+                    iterations += 1
+                    retry_response = await asyncio.to_thread(llm_with_tools.invoke, messages)
+                    
+                    # Process retry response
+                    if hasattr(retry_response, 'tool_calls') and retry_response.tool_calls:
+                        for tool_call in retry_response.tool_calls:
+                            tool_name = tool_call.get('name')
+                            tool_args = tool_call.get('args', {})
+                            
+                            if tool_name in tools_map:
+                                tool = tools_map[tool_name]
+                                tool_start = time.time()
+                                
+                                try:
+                                    if hasattr(tool, 'coroutine'):
+                                        result = await tool.coroutine(**tool_args)
+                                    else:
+                                        result = await asyncio.to_thread(tool.func, **tool_args)
+                                    
+                                    tool_latency = time.time() - tool_start
+                                    tool_calls_details.append({
+                                        'name': tool_name,
+                                        'args': tool_args,
+                                        'result': str(result)[:500],
+                                        'latency': tool_latency,
+                                        'iteration': iterations
+                                    })
+                                    
+                                    messages.append(retry_response)
+                                    messages.append(ToolMessage(
+                                        content=str(result),
+                                        tool_call_id=tool_call.get('id', tool_name)
+                                    ))
+                                    
+                                except Exception as e:
+                                    logger.error(f"Tool {tool_name} failed on retry: {e}")
+                                    tool_calls_details.append({
+                                        'name': tool_name,
+                                        'args': tool_args,
+                                        'error': str(e),
+                                        'latency': time.time() - tool_start,
+                                        'iteration': iterations
+                                    })
                 
                 # Get final response after tool execution
-                if tool_calls_details:
+                if tool_calls_details or tool_not_found_messages:
                     iterations += 1
                     final_response_obj = await asyncio.to_thread(session['llm'].invoke, messages)
                     final_response = final_response_obj.content
@@ -236,7 +304,101 @@ class LLMService:
             }
             
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Error in chat: {e}", exc_info=True)
+            
+            # Handle specific Groq error about tool_choice
+            if "Tool choice is none, but model called a tool" in error_str and provider == 'groq':
+                try:
+                    # Extract the failed tool call from error message
+                    import re
+                    match = re.search(r'"name":\s*"([^"]+)"', error_str)
+                    if match:
+                        failed_tool_name = match.group(1)
+                        
+                        # Add helpful message to conversation
+                        error_msg = f"I tried to call a tool '{failed_tool_name}' that doesn't exist. Let me check the available tools."
+                        messages.append(AIMessage(content=error_msg))
+                        
+                        # List available tools
+                        available_tools = [tool.name for tool in tools]
+                        tools_msg = f"Available tools are: {', '.join(available_tools)}. Let me use the correct tool."
+                        messages.append(SystemMessage(content=tools_msg))
+                        
+                        # Retry with explicit tool list reminder
+                        retry_response = await asyncio.to_thread(llm_with_tools.invoke, messages)
+                        
+                        # Process the retry
+                        if hasattr(retry_response, 'tool_calls') and retry_response.tool_calls:
+                            for tool_call in retry_response.tool_calls:
+                                tool_name = tool_call.get('name')
+                                tool_args = tool_call.get('args', {})
+                                
+                                tools_map = {tool.name: tool for tool in tools}
+                                if tool_name in tools_map:
+                                    tool = tools_map[tool_name]
+                                    
+                                    try:
+                                        if hasattr(tool, 'coroutine'):
+                                            result = await tool.coroutine(**tool_args)
+                                        else:
+                                            result = await asyncio.to_thread(tool.func, **tool_args)
+                                        
+                                        messages.append(retry_response)
+                                        messages.append(ToolMessage(
+                                            content=str(result),
+                                            tool_call_id=tool_call.get('id', tool_name)
+                                        ))
+                                        
+                                        # Get final response
+                                        final_response_obj = await asyncio.to_thread(session['llm'].invoke, messages)
+                                        final_response = final_response_obj.content
+                                        
+                                        # Save to memory
+                                        session['memory'].add_user_message(message)
+                                        session['memory'].add_ai_message(final_response)
+                                        
+                                        return {
+                                            'success': True,
+                                            'response': final_response,
+                                            'metrics': {
+                                                'tokens': len(message.split()) + len(final_response.split()) * 2,
+                                                'latency': round(time.time() - start_time, 2),
+                                                'iterations': 2,
+                                                'tools_called': 1
+                                            },
+                                            'tool_calls': [{
+                                                'name': tool_name,
+                                                'args': tool_args,
+                                                'result': str(result)[:500],
+                                                'latency': 0,
+                                                'iteration': 2
+                                            }] if debug_mode else None
+                                        }
+                                    except Exception as tool_error:
+                                        logger.error(f"Tool execution failed: {tool_error}")
+                        else:
+                            final_response = retry_response.content if retry_response.content else "I apologize, but I couldn't find the right tool to use."
+                            
+                            # Save to memory
+                            session['memory'].add_user_message(message)
+                            session['memory'].add_ai_message(final_response)
+                            
+                            return {
+                                'success': True,
+                                'response': final_response,
+                                'metrics': {
+                                    'tokens': len(message.split()) + len(final_response.split()) * 2,
+                                    'latency': round(time.time() - start_time, 2),
+                                    'iterations': 2,
+                                    'tools_called': 0
+                                },
+                                'tool_calls': None
+                            }
+                        
+                except Exception as retry_error:
+                    logger.error(f"Retry after Groq error failed: {retry_error}")
+            
             return {
                 'success': False,
                 'error': str(e),

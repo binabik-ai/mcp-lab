@@ -4,6 +4,9 @@ Chat handler for MCP Lab
 from typing import Optional, List, Dict, Any
 import logging
 import re
+from pathlib import Path
+import shutil
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +44,8 @@ class ChatHandler:
                 debug_mode=debug_mode
             )
             
-            # Extract media from response
-            media_outputs = self._extract_media(result.get('response', ''))
+            # Extract and process media from response
+            media_outputs = await self._extract_and_process_media(result.get('response', ''))
             
             # Send response
             await self.websocket_manager.send_to_session(session_id, {
@@ -61,18 +64,51 @@ class ChatHandler:
                 "message": str(e)
             })
     
-    def _extract_media(self, text: str) -> List[Dict[str, str]]:
-        """Extract media URLs from response text"""
+    async def _extract_and_process_media(self, text: str) -> List[Dict[str, str]]:
+        """Extract media URLs from response text and process local files"""
         media = []
         
         # Extract file:// URLs
         file_pattern = r'file://(/[^\s]+\.(?:html|png|jpg|jpeg|gif|svg))'
         for match in re.finditer(file_pattern, text, re.IGNORECASE):
-            file_path = match.group(0)
-            if '.html' in file_path.lower():
-                media.append({'type': 'iframe', 'url': file_path})
-            else:
-                media.append({'type': 'image', 'url': file_path})
+            file_url = match.group(0)
+            file_path = file_url.replace('file://', '')
+            
+            # Process local file directly without HTTP call
+            try:
+                from pathlib import Path
+                import shutil
+                import hashlib
+                
+                source_path = Path(file_path)
+                if source_path.exists():
+                    # Generate a unique filename based on content hash
+                    with open(source_path, 'rb') as f:
+                        file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+                    
+                    # Preserve original extension
+                    ext = source_path.suffix
+                    new_filename = f"{source_path.stem}_{file_hash}{ext}"
+                    
+                    # Copy to temp outputs directory
+                    temp_outputs_dir = Path("temp_outputs")
+                    temp_outputs_dir.mkdir(exist_ok=True)
+                    dest_path = temp_outputs_dir / new_filename
+                    shutil.copy2(source_path, dest_path)
+                    
+                    # Create the served URL
+                    served_url = f"/outputs/{new_filename}"
+                    
+                    if '.html' in file_path.lower():
+                        media.append({'type': 'iframe', 'url': served_url})
+                    else:
+                        media.append({'type': 'image', 'url': served_url})
+                    
+                    logger.info(f"Processed media file: {file_path} -> {served_url}")
+                else:
+                    logger.warning(f"File not found: {file_path}")
+            except Exception as e:
+                logger.error(f"Error processing file {file_path}: {e}")
         
         # Extract http(s) URLs that might be plots
         url_pattern = r'https?://[^\s]+(?:plotly|chart|graph|viz)[^\s]*'

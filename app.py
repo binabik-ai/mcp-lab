@@ -4,7 +4,7 @@ MCP Lab - FastAPI backend for MCP testing with multiple LLM providers
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
 import json
@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 import logging
+import shutil
+import hashlib
 
 from config import Config
 from services.llm_service import LLMService
@@ -101,6 +103,12 @@ static_dir = Path("frontend")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
+# Create temp directory for serving MCP output files
+temp_outputs_dir = Path("temp_outputs")
+temp_outputs_dir.mkdir(exist_ok=True)
+# Mount the temp outputs directory
+app.mount("/outputs", StaticFiles(directory="temp_outputs", html=True), name="outputs")
+
 # HTTP Routes
 @app.get("/")
 async def root():
@@ -176,6 +184,42 @@ async def clear_database():
     """Clear all conversation history"""
     db_service.clear_all()
     return {"status": "cleared"}
+
+@app.post("/api/process-output-file")
+async def process_output_file(data: Dict[str, str]):
+    """Process and serve an output file from MCP tools"""
+    try:
+        file_path = data.get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=400, detail="file_path is required")
+            
+        source_path = Path(file_path)
+        
+        if not source_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Generate a unique filename based on content hash
+        with open(source_path, 'rb') as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+        
+        # Preserve original extension
+        ext = source_path.suffix
+        new_filename = f"{source_path.stem}_{file_hash}{ext}"
+        
+        # Copy to temp outputs directory
+        dest_path = temp_outputs_dir / new_filename
+        shutil.copy2(source_path, dest_path)
+        
+        # Return the URL to access the file
+        return {
+            "url": f"/outputs/{new_filename}",
+            "filename": new_filename,
+            "original_path": str(source_path)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing output file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # WebSocket endpoint
 @app.websocket("/ws")
