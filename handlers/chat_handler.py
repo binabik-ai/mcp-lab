@@ -45,7 +45,11 @@ class ChatHandler:
             )
             
             # Extract and process media from response
-            media_outputs = await self._extract_and_process_media(result.get('response', ''))
+            response_text = result.get('response', '')
+            # Ensure response is a string
+            if not isinstance(response_text, str):
+                response_text = str(response_text) if response_text else ''
+            media_outputs = await self._extract_and_process_media(response_text)
             
             # Send response
             await self.websocket_manager.send_to_session(session_id, {
@@ -68,18 +72,40 @@ class ChatHandler:
         """Extract media URLs from response text and process local files"""
         media = []
         
+        # Log the text being searched (truncated for readability)
+        logger.info(f"Searching for media files in text (first 500 chars): {text[:500]}")
+        
+        # Extract file:// URLs and absolute paths to media files
+        # Pattern 1: file:// URLs
+        file_url_pattern = r'file://(/[^\s]+\.(?:html|png|jpg|jpeg|gif|svg))'
+        # Pattern 2: Absolute paths without file:// prefix - more permissive
+        # Look for paths that start with /Users or /home or /tmp or /var etc
+        abs_path_pattern = r'(/(?:Users|home|tmp|var|opt|mnt)[^\s\'"<>]*\.(?:html|png|jpg|jpeg|gif|svg))\b'
+        
+        # Collect all file paths
+        file_paths = []
+        
         # Extract file:// URLs
-        file_pattern = r'file://(/[^\s]+\.(?:html|png|jpg|jpeg|gif|svg))'
-        for match in re.finditer(file_pattern, text, re.IGNORECASE):
-            file_url = match.group(0)
-            file_path = file_url.replace('file://', '')
+        for match in re.finditer(file_url_pattern, text, re.IGNORECASE):
+            file_paths.append(match.group(1))
+            logger.info(f"Found file:// URL: {match.group(1)}")
+        
+        # Extract absolute paths
+        for match in re.finditer(abs_path_pattern, text, re.IGNORECASE):
+            path = match.group(1)
+            # Avoid duplicates
+            if path not in file_paths:
+                file_paths.append(path)
+                logger.info(f"Found absolute path: {path}")
+        
+        if file_paths:
+            logger.info(f"Found {len(file_paths)} media files to process")
+        
+        # Process each file path
+        for file_path in file_paths:
             
-            # Process local file directly without HTTP call
+            # Process local file directly
             try:
-                from pathlib import Path
-                import shutil
-                import hashlib
-                
                 source_path = Path(file_path)
                 if source_path.exists():
                     # Generate a unique filename based on content hash

@@ -1,5 +1,5 @@
 """
-Multi-provider LLM service for MCP Lab
+Multi-provider LLM service for MCP Lab - Simplified Agent Version
 """
 from typing import Optional, List, Dict, Any
 from langchain_groq import ChatGroq
@@ -16,7 +16,7 @@ import json
 logger = logging.getLogger(__name__)
 
 class LLMService:
-    """Service for managing multi-provider LLM interactions"""
+    """Service for managing multi-provider LLM interactions with agent loop"""
     
     def __init__(self, config, db_service):
         self.config = config
@@ -105,6 +105,54 @@ class LLMService:
             }
         return self.sessions[session_id]
     
+    async def _execute_tool(self, tool_call: dict, tools_map: dict) -> dict:
+        """Execute a single tool"""
+        tool_name = tool_call.get('name')
+        tool_args = tool_call.get('args', {})
+        tool_start = time.time()
+        
+        if tool_name not in tools_map:
+            error_msg = f"Tool '{tool_name}' not found. Available: {', '.join(tools_map.keys())}"
+            logger.warning(error_msg)
+            return {
+                'tool_call_id': tool_call.get('id', tool_name),
+                'name': tool_name,
+                'args': tool_args,
+                'result': error_msg,
+                'error': True,
+                'latency': 0,
+                'iteration': 0
+            }
+        
+        tool = tools_map[tool_name]
+        try:
+            if hasattr(tool, 'coroutine'):
+                result = await tool.coroutine(**tool_args)
+            else:
+                result = await asyncio.to_thread(tool.func, **tool_args)
+            
+            return {
+                'tool_call_id': tool_call.get('id', tool_name),
+                'name': tool_name,
+                'args': tool_args,
+                'result': str(result)[:500],  # Truncate for storage
+                'full_result': str(result),
+                'error': False,
+                'latency': time.time() - tool_start,
+                'iteration': 0
+            }
+        except Exception as e:
+            logger.error(f"Tool {tool_name} failed: {e}")
+            return {
+                'tool_call_id': tool_call.get('id', tool_name),
+                'name': tool_name,
+                'args': tool_args,
+                'result': f"Error: {str(e)}",
+                'error': True,
+                'latency': time.time() - tool_start,
+                'iteration': 0
+            }
+    
     async def chat_with_tools(self, 
                               message: str,
                               session_id: str,
@@ -112,184 +160,181 @@ class LLMService:
                               model: str,
                               provider: str,
                               debug_mode: bool = False) -> Dict[str, Any]:
-        """Process chat with MCP tools support"""
+        """Process chat with MCP tools support using agent loop"""
         start_time = time.time()
         session = self._get_or_create_session(session_id, model, provider)
         
-        # Prepare messages
+        # Prepare messages - filter out empty messages
         system_prompt = "You are a helpful assistant with access to various tools through MCP servers. Use them when needed to help the user."
         messages = [SystemMessage(content=system_prompt)]
-        messages.extend(session['memory'].messages)
+        
+        # Add history but filter empty messages (important for Anthropic)
+        for msg in session['memory'].messages:
+            if hasattr(msg, 'content') and msg.content and str(msg.content).strip():
+                messages.append(msg)
+        
         messages.append(HumanMessage(content=message))
         
         # Track metrics
-        tool_calls_details = []
+        all_tool_calls = []
         iterations = 0
-        total_tokens = 0
+        max_iterations = 5
+        final_response = ""
         
         try:
-            # Bind tools to LLM with explicit tool choice
+            # Bind tools to LLM
             if tools:
-                # Force tool choice to 'auto' to prevent the error
-                llm_with_tools = session['llm'].bind_tools(tools, tool_choice="auto")
+                # Don't specify tool_choice for Groq
+                if provider == 'groq':
+                    llm_with_tools = session['llm'].bind_tools(tools)
+                else:
+                    llm_with_tools = session['llm'].bind_tools(tools, tool_choice="auto")
             else:
                 llm_with_tools = session['llm']
             
-            # Initial LLM call
-            response = await asyncio.to_thread(llm_with_tools.invoke, messages)
-            iterations = 1
+            # Create tools map
+            tools_map = {tool.name: tool for tool in tools}
             
-            # Extract tool calls
-            tool_calls = []
-            if hasattr(response, 'tool_calls'):
-                tool_calls = response.tool_calls
-            
-            # Process tool calls (simplified for now - can be enhanced)
-            final_response = response.content if response.content else ""
-            
-            if tool_calls:
-                # Execute tools
-                tools_map = {tool.name: tool for tool in tools}
-                tool_not_found_messages = []
+            # Agent loop
+            while iterations < max_iterations:
+                iterations += 1
                 
-                for tool_call in tool_calls:
-                    tool_name = tool_call.get('name')
-                    tool_args = tool_call.get('args', {})
-                    
-                    if tool_name in tools_map:
-                        tool = tools_map[tool_name]
-                        tool_start = time.time()
-                        
+                # Call LLM
+                try:
+                    response = await asyncio.to_thread(llm_with_tools.invoke, messages)
+                except Exception as e:
+                    error_str = str(e)
+                    # Handle Groq's tool choice error
+                    if "Tool choice is none" in error_str and provider == 'groq':
+                        logger.warning("Groq tool choice error, trying without tools")
                         try:
-                            if hasattr(tool, 'coroutine'):
-                                result = await tool.coroutine(**tool_args)
+                            response = await asyncio.to_thread(session['llm'].invoke, messages)
+                        except:
+                            # If still fails, use the last response or a default
+                            if final_response:
+                                break
                             else:
-                                result = await asyncio.to_thread(tool.func, **tool_args)
-                            
-                            tool_latency = time.time() - tool_start
-                            tool_calls_details.append({
-                                'name': tool_name,
-                                'args': tool_args,
-                                'result': str(result)[:500],  # Truncate for storage
-                                'latency': tool_latency,
-                                'iteration': iterations
-                            })
-                            
-                            # Add tool result to messages
-                            messages.append(response)
-                            messages.append(ToolMessage(
-                                content=str(result),
-                                tool_call_id=tool_call.get('id', tool_name)
-                            ))
-                            
-                        except Exception as e:
-                            logger.error(f"Tool {tool_name} failed: {e}")
-                            tool_calls_details.append({
-                                'name': tool_name,
-                                'args': tool_args,
-                                'error': str(e),
-                                'latency': time.time() - tool_start,
-                                'iteration': iterations
-                            })
+                                final_response = "I encountered an error processing your request."
+                                break
                     else:
-                        # Tool not found - add message for LLM to retry
-                        error_msg = f"Tool '{tool_name}' not found. Available tools: {', '.join(tools_map.keys())}"
-                        tool_not_found_messages.append(error_msg)
-                        tool_calls_details.append({
-                            'name': tool_name,
-                            'args': tool_args,
-                            'error': error_msg,
-                            'latency': 0,
-                            'iteration': iterations
-                        })
-                        logger.warning(f"Tool not found: {tool_name}")
+                        raise
                 
-                # If there were tool not found errors, add them to messages and retry
-                if tool_not_found_messages:
-                    messages.append(response)
-                    for error_msg in tool_not_found_messages:
-                        messages.append(ToolMessage(
-                            content=error_msg,
-                            tool_call_id=tool_name
-                        ))
+                # Check if response has content
+                if hasattr(response, 'content') and response.content:
+                    # Handle different response formats
+                    content = response.content
                     
-                    # Retry with correct tools
-                    iterations += 1
-                    retry_response = await asyncio.to_thread(llm_with_tools.invoke, messages)
-                    
-                    # Process retry response
-                    if hasattr(retry_response, 'tool_calls') and retry_response.tool_calls:
-                        for tool_call in retry_response.tool_calls:
-                            tool_name = tool_call.get('name')
-                            tool_args = tool_call.get('args', {})
-                            
-                            if tool_name in tools_map:
-                                tool = tools_map[tool_name]
-                                tool_start = time.time()
-                                
-                                try:
-                                    if hasattr(tool, 'coroutine'):
-                                        result = await tool.coroutine(**tool_args)
-                                    else:
-                                        result = await asyncio.to_thread(tool.func, **tool_args)
-                                    
-                                    tool_latency = time.time() - tool_start
-                                    tool_calls_details.append({
-                                        'name': tool_name,
-                                        'args': tool_args,
-                                        'result': str(result)[:500],
-                                        'latency': tool_latency,
-                                        'iteration': iterations
-                                    })
-                                    
-                                    messages.append(retry_response)
-                                    messages.append(ToolMessage(
-                                        content=str(result),
-                                        tool_call_id=tool_call.get('id', tool_name)
-                                    ))
-                                    
-                                except Exception as e:
-                                    logger.error(f"Tool {tool_name} failed on retry: {e}")
-                                    tool_calls_details.append({
-                                        'name': tool_name,
-                                        'args': tool_args,
-                                        'error': str(e),
-                                        'latency': time.time() - tool_start,
-                                        'iteration': iterations
-                                    })
+                    # Handle Anthropic's content blocks format
+                    if isinstance(content, list):
+                        text_parts = []
+                        for block in content:
+                            if isinstance(block, dict):
+                                if block.get('type') == 'text':
+                                    text_parts.append(block.get('text', ''))
+                            elif isinstance(block, str):
+                                text_parts.append(block)
+                        final_response = ' '.join(text_parts).strip()
+                    elif isinstance(content, str):
+                        final_response = content
+                    else:
+                        final_response = str(content)
                 
-                # Get final response after tool execution
-                if tool_calls_details or tool_not_found_messages:
-                    iterations += 1
-                    final_response_obj = await asyncio.to_thread(session['llm'].invoke, messages)
-                    final_response = final_response_obj.content
+                # Check for tool calls
+                if not hasattr(response, 'tool_calls') or not response.tool_calls:
+                    # No more tool calls, we're done
+                    break
+                
+                # Add the assistant's message to history
+                messages.append(response)
+                
+                # Execute tools (in parallel if multiple)
+                tool_calls = response.tool_calls
+                
+                if len(tool_calls) > 1:
+                    # Execute multiple tools in parallel
+                    tool_results = await asyncio.gather(
+                        *[self._execute_tool(tc, tools_map) for tc in tool_calls]
+                    )
+                else:
+                    # Execute single tool
+                    tool_results = [await self._execute_tool(tool_calls[0], tools_map)]
+                
+                # Update iteration number in results
+                for result in tool_results:
+                    result['iteration'] = iterations
+                    all_tool_calls.append(result)
+                
+                # Add tool results to messages
+                for result in tool_results:
+                    messages.append(ToolMessage(
+                        content=result.get('full_result', result['result']),
+                        tool_call_id=result['tool_call_id']
+                    ))
+            
+            # Make sure we have a final response
+            if not final_response and iterations > 0:
+                # Try to get a final summary
+                try:
+                    final_msg = await asyncio.to_thread(session['llm'].invoke, messages)
+                    if hasattr(final_msg, 'content') and final_msg.content:
+                        content = final_msg.content
+                        # Handle Anthropic's content blocks
+                        if isinstance(content, list):
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if block.get('type') == 'text':
+                                        text_parts.append(block.get('text', ''))
+                                elif isinstance(block, str):
+                                    text_parts.append(block)
+                            final_response = ' '.join(text_parts).strip()
+                        else:
+                            final_response = str(content)
+                except:
+                    final_response = "I've completed the requested operations. Please see the results above."
+            
+            # Final cleanup - ensure response is a clean string
+            if isinstance(final_response, list):
+                text_parts = []
+                for item in final_response:
+                    if isinstance(item, dict):
+                        if item.get('type') == 'text':
+                            text_parts.append(item.get('text', ''))
+                        else:
+                            # Skip tool_use blocks
+                            continue
+                    else:
+                        text_parts.append(str(item))
+                final_response = ' '.join(text_parts).strip()
+            
+            # Make sure final_response is a string
+            if not isinstance(final_response, str):
+                final_response = str(final_response)
             
             # Calculate metrics
             total_latency = time.time() - start_time
+            total_tokens = len(message.split()) + len(str(final_response).split()) * 2
             
-            # Estimate tokens (rough calculation)
-            if final_response:
-                total_tokens = len(message.split()) + len(final_response.split()) * 2
-            else:
-                total_tokens = len(message.split()) * 2
-            
-            # Save to memory
+            # Save to memory (clean response for history)
             session['memory'].add_user_message(message)
-            session['memory'].add_ai_message(final_response)
+            if final_response:
+                session['memory'].add_ai_message(str(final_response))
             
             # Save to database
-            self.db_service.save_conversation(
-                session_id=session_id,
-                provider=provider,
-                model=model,
-                user_message=message,
-                ai_response=final_response,
-                total_tokens=total_tokens,
-                total_latency=total_latency,
-                tool_iterations=iterations,
-                tools_called_count=len(tool_calls_details),
-                tool_calls=tool_calls_details
-            )
+            if self.db_service:
+                self.db_service.save_conversation(
+                    session_id=session_id,
+                    provider=provider,
+                    model=model,
+                    user_message=message,
+                    ai_response=str(final_response),
+                    total_tokens=total_tokens,
+                    total_latency=total_latency,
+                    tool_iterations=iterations,
+                    tools_called_count=len(all_tool_calls),
+                    tool_calls=[{k: v for k, v in tc.items() if k != 'full_result'} 
+                               for tc in all_tool_calls]
+                )
             
             return {
                 'success': True,
@@ -298,107 +343,13 @@ class LLMService:
                     'tokens': total_tokens,
                     'latency': round(total_latency, 2),
                     'iterations': iterations,
-                    'tools_called': len(tool_calls_details)
+                    'tools_called': len(all_tool_calls)
                 },
-                'tool_calls': tool_calls_details if debug_mode else None
+                'tool_calls': all_tool_calls if debug_mode else None
             }
             
         except Exception as e:
-            error_str = str(e)
             logger.error(f"Error in chat: {e}", exc_info=True)
-            
-            # Handle specific Groq error about tool_choice
-            if "Tool choice is none, but model called a tool" in error_str and provider == 'groq':
-                try:
-                    # Extract the failed tool call from error message
-                    import re
-                    match = re.search(r'"name":\s*"([^"]+)"', error_str)
-                    if match:
-                        failed_tool_name = match.group(1)
-                        
-                        # Add helpful message to conversation
-                        error_msg = f"I tried to call a tool '{failed_tool_name}' that doesn't exist. Let me check the available tools."
-                        messages.append(AIMessage(content=error_msg))
-                        
-                        # List available tools
-                        available_tools = [tool.name for tool in tools]
-                        tools_msg = f"Available tools are: {', '.join(available_tools)}. Let me use the correct tool."
-                        messages.append(SystemMessage(content=tools_msg))
-                        
-                        # Retry with explicit tool list reminder
-                        retry_response = await asyncio.to_thread(llm_with_tools.invoke, messages)
-                        
-                        # Process the retry
-                        if hasattr(retry_response, 'tool_calls') and retry_response.tool_calls:
-                            for tool_call in retry_response.tool_calls:
-                                tool_name = tool_call.get('name')
-                                tool_args = tool_call.get('args', {})
-                                
-                                tools_map = {tool.name: tool for tool in tools}
-                                if tool_name in tools_map:
-                                    tool = tools_map[tool_name]
-                                    
-                                    try:
-                                        if hasattr(tool, 'coroutine'):
-                                            result = await tool.coroutine(**tool_args)
-                                        else:
-                                            result = await asyncio.to_thread(tool.func, **tool_args)
-                                        
-                                        messages.append(retry_response)
-                                        messages.append(ToolMessage(
-                                            content=str(result),
-                                            tool_call_id=tool_call.get('id', tool_name)
-                                        ))
-                                        
-                                        # Get final response
-                                        final_response_obj = await asyncio.to_thread(session['llm'].invoke, messages)
-                                        final_response = final_response_obj.content
-                                        
-                                        # Save to memory
-                                        session['memory'].add_user_message(message)
-                                        session['memory'].add_ai_message(final_response)
-                                        
-                                        return {
-                                            'success': True,
-                                            'response': final_response,
-                                            'metrics': {
-                                                'tokens': len(message.split()) + len(final_response.split()) * 2,
-                                                'latency': round(time.time() - start_time, 2),
-                                                'iterations': 2,
-                                                'tools_called': 1
-                                            },
-                                            'tool_calls': [{
-                                                'name': tool_name,
-                                                'args': tool_args,
-                                                'result': str(result)[:500],
-                                                'latency': 0,
-                                                'iteration': 2
-                                            }] if debug_mode else None
-                                        }
-                                    except Exception as tool_error:
-                                        logger.error(f"Tool execution failed: {tool_error}")
-                        else:
-                            final_response = retry_response.content if retry_response.content else "I apologize, but I couldn't find the right tool to use."
-                            
-                            # Save to memory
-                            session['memory'].add_user_message(message)
-                            session['memory'].add_ai_message(final_response)
-                            
-                            return {
-                                'success': True,
-                                'response': final_response,
-                                'metrics': {
-                                    'tokens': len(message.split()) + len(final_response.split()) * 2,
-                                    'latency': round(time.time() - start_time, 2),
-                                    'iterations': 2,
-                                    'tools_called': 0
-                                },
-                                'tool_calls': None
-                            }
-                        
-                except Exception as retry_error:
-                    logger.error(f"Retry after Groq error failed: {retry_error}")
-            
             return {
                 'success': False,
                 'error': str(e),
