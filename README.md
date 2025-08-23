@@ -14,25 +14,13 @@ A focused testing environment for MCP (Model Context Protocol) servers with mult
 
 ## Quick Start
 
-### 1. Clone or Create Project Structure
-
-```bash
-mkdir mcp-lab
-cd mcp-lab
-
-# Create directory structure
-mkdir -p config services handlers frontend
-
-# Copy all the provided files to their respective locations
-```
-
-### 2. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
@@ -44,7 +32,7 @@ Required: At least one LLM provider API key:
 - `OPENAI_API_KEY` - Get from [platform.openai.com](https://platform.openai.com)
 - `ANTHROPIC_API_KEY` - Get from [console.anthropic.com](https://console.anthropic.com)
 
-### 4. Configure MCP Servers
+### 3. Configure MCP Servers
 
 Edit `config/mcp_config.json`:
 
@@ -77,8 +65,8 @@ python run.py
 ```
 
 Open your browser to:
-- **Main Lab**: http://localhost:8000
-- **Analytics**: http://localhost:8000/analytics
+- **Main Lab**: http://localhost:8008
+- **Analytics**: http://localhost:8008/analytics
 
 ## Project Structure
 
@@ -123,7 +111,7 @@ mcp-lab/
 - **Tokens**: Approximate token count for the exchange
 - **Latency**: Total time from request to response
 - **Tools Called**: Number of MCP tool invocations
-- **Iterations**: Number of reasoning cycles
+- **Iterations**: Number of reasoning cycles (simple agent in a loop)
 
 ### Media Rendering
 
@@ -161,52 +149,6 @@ npm install -g @modelcontextprotocol/server-name
 }
 ```
 
-3. Restart MCP Lab
-
-## Missing Files
-
-You'll need to copy these files from your original project or recreate them:
-
-### `services/mcp_service.py`
-Copy your existing MCP service file as-is (it's already well-designed for multiple servers)
-
-### `services/mcp_tools_bridge.py`
-Copy your existing MCP tools bridge file as-is
-
-### `handlers/websocket_manager.py`
-Create a simple WebSocket manager:
-
-```python
-from typing import Dict
-from fastapi import WebSocket
-import json
-import logging
-
-logger = logging.getLogger(__name__)
-
-class WebSocketManager:
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-    
-    async def connect(self, websocket: WebSocket, session_id: str):
-        await websocket.accept()
-        self.active_connections[session_id] = websocket
-        logger.info(f"WebSocket connected: {session_id}")
-    
-    async def disconnect(self, session_id: str):
-        if session_id in self.active_connections:
-            del self.active_connections[session_id]
-            logger.info(f"WebSocket disconnected: {session_id}")
-    
-    async def send_to_session(self, session_id: str, data: dict):
-        if session_id in self.active_connections:
-            try:
-                await self.active_connections[session_id].send_json(data)
-            except Exception as e:
-                logger.error(f"Error sending to session {session_id}: {e}")
-                await self.disconnect(session_id)
-```
-
 ## Troubleshooting
 
 ### MCP Servers Not Connecting
@@ -224,13 +166,6 @@ class WebSocketManager:
 - Delete `mcp_lab.db` to start fresh
 - Check write permissions in the directory
 
-## Development
-
-### Adding New Features
-
-1. **New Tool Types**: Edit `handlers/chat_handler.py` `_extract_media()` method
-2. **New Metrics**: Add to database schema in `services/db_service.py`
-3. **New Providers**: Add to `services/llm_service.py` models and provider setup
 
 ### Debug Mode
 
@@ -241,7 +176,7 @@ Set `DEBUG=True` in `.env` for:
 
 ## License
 
-MIT
+Apache 2
 
 ## Contributing
 
@@ -249,4 +184,4 @@ Contributions welcome! This is a testing tool for MCP development, so features t
 
 ## Acknowledgments
 
-Built for testing MCP (Model Context Protocol) servers with various LLM providers. MCP is developed by Anthropic.
+Built for testing MCP (Model Context Protocol) servers with various LLM providers. MCP is originally developed by Anthropic.
