@@ -275,9 +275,30 @@
                     toolCallsHtml = '<div class="tool-calls">';
                     toolCallsHtml += '<div class="tool-calls-header">🔧 Tool Execution</div>';
                     
-                    toolCalls.forEach(call => {
+                    toolCalls.forEach((call, index) => {
                         const args = JSON.stringify(call.args, null, 2);
-                        const result = call.result || call.error || 'No result';
+                        const result = call.full_result || call.result || call.error || 'No result';
+                        const resultId = `result-${this.sessionId}-${Date.now()}-${index}`;
+                        
+                        // Check if result is long
+                        const isLongResult = result.length > 500;
+                        
+                        // Check if result contains media info
+                        let mediaHtml = '';
+                        if (call.media && call.media.path) {
+                            const filePath = call.media.path;
+                            if (filePath.endsWith('.html')) {
+                                mediaHtml = `<div class="tool-media">
+                                    <a href="file://${filePath}" target="_blank">📊 Open Plot</a>
+                                    <iframe src="file://${filePath}" class="tool-plot-iframe"></iframe>
+                                </div>`;
+                            } else if (filePath.match(/\.(png|jpg|jpeg|gif|svg)$/i)) {
+                                mediaHtml = `<div class="tool-media">
+                                    <img src="file://${filePath}" class="tool-output-image" />
+                                </div>`;
+                            }
+                        }
+                        
                         toolCallsHtml += `
                             <div class="tool-call">
                                 <div class="tool-name">${call.name} (${call.latency?.toFixed(2)}s)</div>
@@ -285,9 +306,11 @@
                                     <summary>Arguments</summary>
                                     <pre>${this.escapeHtml(args)}</pre>
                                 </details>
-                                <details>
+                                <details open>
                                     <summary>Result</summary>
-                                    <pre>${this.escapeHtml(result)}</pre>
+                                    <pre id="${resultId}" class="tool-result ${isLongResult ? 'collapsed' : ''}">${this.escapeHtml(result)}</pre>
+                                    ${isLongResult ? `<a class="tool-result-expand" onclick="toggleResult('${resultId}')">Show full result</a>` : ''}
+                                    ${mediaHtml}
                                 </details>
                             </div>
                         `;
@@ -296,7 +319,7 @@
                     toolCallsHtml += '</div>';
                 }
                 
-                // Build media outputs
+                // Build media outputs from AI response
                 let mediaHtml = '';
                 if (mediaOutputs && mediaOutputs.length > 0) {
                     mediaOutputs.forEach(media => {
@@ -316,7 +339,7 @@
                             📊 ${metrics.tokens || 0} tokens • 
                             ⏱️ ${metrics.latency || 0}s • 
                             🔧 ${metrics.tools_called || 0} tools • 
-                            🔄 ${metrics.iterations || 0} iterations
+                            🔄 ${metrics.iterations || 0} iteration${metrics.iterations !== 1 ? 's' : ''}
                         </div>
                     `;
                 }
@@ -389,6 +412,19 @@
         
         // Global functions for modal
         let lab;
+        
+        function toggleResult(resultId) {
+            const resultEl = document.getElementById(resultId);
+            const linkEl = resultEl.nextElementSibling;
+            
+            if (resultEl.classList.contains('collapsed')) {
+                resultEl.classList.remove('collapsed');
+                linkEl.textContent = 'Show less';
+            } else {
+                resultEl.classList.add('collapsed');
+                linkEl.textContent = 'Show full result';
+            }
+        }
         
         function confirmModelChange(keepContext) {
             if (!lab.pendingModelChange) return;
