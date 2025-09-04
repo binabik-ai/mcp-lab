@@ -44,15 +44,11 @@ Edit `config/mcp_config.json`:
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
       "env": {}
     },
-    "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "env": {}
-    },
-    "puppeteer": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
-      "env": {}
+    "rosbag_reader": {
+      "command": "/path_to_venv/bin/python",
+      "args": [
+        "/path_to_ws/mcp-rosbags/src/server.py"
+      ],
     }
   }
 }
@@ -152,7 +148,6 @@ npm install -g @modelcontextprotocol/server-name
 ## Troubleshooting
 
 ### MCP Servers Not Connecting
-- Check that Node.js and npm are installed
 - Verify MCP server packages are installed
 - Check the command paths in `mcp_config.json`
 - Look at console logs for specific error messages
