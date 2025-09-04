@@ -124,13 +124,7 @@ The system automatically detects and renders:
 - Track average metrics per provider
 
 ## Adding MCP Servers
-
-1. Install the MCP server:
-```bash
-npm install -g @modelcontextprotocol/server-name
-```
-
-2. Add to `config/mcp_config.json`:
+Add to `config/mcp_config.json`:
 ```json
 {
   "mcpServers": {
