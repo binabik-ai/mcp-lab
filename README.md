@@ -56,8 +56,7 @@ python run.py
 ```
 
 Open your browser to:
-- **Main Lab**: http://localhost:8008
-- **Analytics**: http://localhost:8008/analytics
+- **Main Lab**: http://localhost:8000
 
 ## Project Structure
 
