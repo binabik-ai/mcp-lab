@@ -173,9 +173,6 @@ Set `DEBUG=True` in `.env` for:
 
 Apache 2
 
-## Contributing
-
-Contributions welcome! This is a testing tool for MCP development, so features that help with debugging and analysis are especially appreciated.
 
 ## Acknowledgments
 
