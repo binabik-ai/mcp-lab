@@ -39,11 +39,6 @@ Edit `config/mcp_config.json`:
 ```json
 {
   "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-      "env": {}
-    },
     "rosbag_reader": {
       "command": "/path_to_venv/bin/python",
       "args": [
